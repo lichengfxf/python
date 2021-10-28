@@ -29,6 +29,19 @@ timeout = 15
 browser.set_page_load_timeout(timeout)
 
 #
+# 请求页面，处理异常
+#
+def get_page(url, timeout):
+  try:
+    r = requests.get(url=url, timeout=timeout)
+    if r.ok:
+      r.encoding = 'utf-8'
+      return r.text
+    else:
+      return ''
+  except requests.RequestException:
+    return ''
+#
 # 获取视频列表
 #
 def get_video_list(url, timeout):    
@@ -44,15 +57,27 @@ def get_video_list(url, timeout):
   for video in video_list:
     video_url = video.find_element(By.CSS_SELECTOR, 'a').get_property('href')
     video_title = video.find_element(By.CSS_SELECTOR, 'a > img').get_property('alt')
-    get_video_m3u8(video_url)
+    video_m3u8_url = get_video_m3u8(video_url)
+    if len(video_m3u8_url) == 0:
+      print('获取video_m3u8_url失败')
+    else:
+      cmd = r'ffplay -i "{}"'.format(video_m3u8_url)
+      with open(video_title + '.m3u8.bat', 'wb') as f:
+        f.write(cmd.encode('utf-8'))
     
 def get_video_m3u8(url):
-  r = requests.get(url)
-  # cms_player = 
-  m3u8_tmp = re.match(r'.*cms_player = (.*?);</script>', r.text, re.S)
-  j = json.load(m3u8_tmp.group(1))
-  m = j['url']
-  print(m)
+  html = get_page(url, timeout)
+  if len(html) == 0:
+    return ''
+  m3u8_tmp = re.match(r'.*cms_player = (.*?);</script>', html, re.S)
+  j = json.loads(m3u8_tmp.group(1))
+  url_m3 = j['url']
+  html = get_page(url_m3, timeout)
+  if len(html) == 0:
+    return ''
+  # 拼接完整地址 /20211022/ZNjFC7l5/800kb/hls/index.m3u8
+  file_path = re.search(r'/.*index\.m3u8', html, re.S).group()
+  return "https://vip5.bobolj.com" + file_path
 
 def main():
     get_video_list(url, timeout)  
