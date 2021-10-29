@@ -3,6 +3,7 @@ from pyquery import PyQuery as pq
 import urllib
 from os import path
 import os
+import sys
 import re
 from bs4 import BeautifulSoup as bs
 from selenium import webdriver
@@ -12,7 +13,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 import time
 import json
-import multiprocessing
+import threading
+import queue
 
 #
 # 请求页面，处理异常
@@ -74,23 +76,58 @@ def get_video_m3u8(browser, url, timeout):
   file_path = re.search(r'/.*index\.m3u8', html, re.S).group()
   return "https://vip5.bobolj.com" + file_path
 
-if __name__ == '__main__':
-    # 因为网站的大部分内容是用js动态加载的，
-    # 所以必须使用webdriver访问
-    browser = webdriver.Chrome()
+#
+# 后台线程: 获取视频数据
+#
+class get_video_thead(threading.Thread):
+  def __init__(self, ID, work_queue):
+    threading.Thread.__init__(self)
+    self.ID = ID
+    self.work_queue = work_queue
 
+  def run(self):
+    while not self.work_queue.empty():
+      gv_locker.acquire()
+      self.page_url, self.page_num, self.timeout = work_queue.get()
+      gv_locker.release()
+
+      #
+      # 多线程环境下调用print会错乱
+      #
+      #print('>> [{:0>2d}]正在获取第{:0>3d}页的数据 -> {}'.format(self.ID, self.page_num, self.page_url))
+      sys.stdout.write('>> [{:0>2d}]正在获取第{:0>3d}页的数据 -> {}\n'.format(self.ID, self.page_num, self.page_url))
+      
+      # 因为网站的大部分内容是用js动态加载的，
+      # 所以必须使用webdriver访问
+      browser = webdriver.Chrome()
+      # 如果元素没有立即加载，最多等待多久
+      browser.set_page_load_timeout(timeout)
+      get_video_list(browser, self.page_url, self.timeout, self.page_num)
+      browser.close()
+    sys.stdout.write('>> [{:0>2d}] 线程结束...\n'.format(self.ID))
+
+
+# 全局锁
+gv_locker = threading.Lock()
+
+if __name__ == '__main__':
     # 设置超时时间
     timeout = 15
-    # 如果元素没有立即加载，最多等待多久
-    browser.set_page_load_timeout(timeout)
-
+    
     url = r'https://bb2240.com/guochan/p{}.html'
-    p = multiprocessing.Pool(4)
-    for i in range(1, 4):
-      print('>> 正在获取第{}页的数据...'.format(i))
-      #get_video_list(browser, url.format(i), timeout, i)
-      p.apply_async(get_video_list, (browser, url.format(i), timeout, i))
+    
+    # 初始化工作队列
+    work_queue = queue.Queue(1024)    
+    for i in range(1, 100):
+      work_queue.put((url.format(i), i, timeout))
+    
+    # 初始化线程池
+    gvt_list = []
+    for i in range(4):
+      t = get_video_thead(i, work_queue)
+      t.start()
+      gvt_list.append(t)
 
-    p.close()
-    p.join()
-    browser.close()
+    # 等待所有线程结束
+    for t in gvt_list:
+      t.join()
